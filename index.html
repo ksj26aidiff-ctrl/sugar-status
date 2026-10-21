@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sugar 노드 현황</title>
+<style>
+:root{--bg:#f6f7f4;--fg:#1d211c;--muted:#6a7066;--panel:#ffffff;--line:#d9ddd5;--ok:#1f7a3a;--warn:#a65d00;--bad:#b3261e;--mine:#2f6fb8;--other:#9aa097;--grid:#e6e9e2;color-scheme:light}
+@media (prefers-color-scheme: dark){:root{--bg:#161916;--fg:#e7eae3;--muted:#9aa196;--panel:#1f231f;--line:#333830;--ok:#5fc27a;--warn:#e0a24a;--bad:#ef7a73;--mine:#6ea6e6;--other:#6b716a;--grid:#2b302a;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-variant-numeric:tabular-nums;padding-block:16px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+main{max-width:860px;margin:0 auto;display:grid;gap:14px}
+h1{font-size:22px;font-weight:600;margin:0}
+h2{font-size:15px;font-weight:600;margin:0 0 8px;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;min-width:0}
+.take{margin:4px 0 0}
+.stamp{font-size:13px;color:var(--muted);margin:2px 0 0}
+.stamp.old{color:var(--warn);font-weight:600}
+.nodes{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,150px),1fr));gap:8px}
+.node{border:1px solid var(--line);border-radius:8px;padding:8px;display:grid;gap:5px;min-width:0}
+.node.mine{border-color:var(--mine)}
+.node.down{opacity:.5}
+.head{display:flex;justify-content:space-between;gap:6px;align-items:center}
+.name{font-weight:600}
+.chip{font-size:12px;padding:0 .55em;border-radius:999px;border:1px solid var(--line);white-space:nowrap}
+.chip.ok{color:var(--ok)}.chip.warn{color:var(--warn)}.chip.bad{color:var(--bad)}
+.bar{height:6px;border-radius:3px;background:var(--grid);overflow:hidden}
+.bar i{display:block;height:100%;border-radius:3px;background:var(--other)}
+.node.mine .bar i{background:var(--mine)}
+.small{font-size:12.5px;color:var(--muted);overflow-wrap:anywhere}
+.pools{display:grid;gap:12px}
+.pool{display:grid;gap:4px}
+.row{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.pct{font-size:20px;font-weight:600}
+.pool .bar i{background:var(--mine)}
+.tablebox{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+th,td{text-align:left;padding:5px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+th{color:var(--muted);font-weight:600;font-size:12px}
+tr.run td:first-child{color:var(--ok);font-weight:600}
+.err{color:var(--bad)}
+footer{font-size:12px;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+  <div>
+    <h1>Sugar 노드 현황</h1>
+    <p class="take" id="take">불러오는 중…</p>
+    <p class="stamp"><span id="stamp"></span> <span id="src" class="small"></span></p>
+  </div>
+  <section class="card">
+    <div class="nodes" id="nodes"></div>
+  </section>
+  <footer>워크스테이션 cron이 1분마다 Sugar(sinfo·squeue)를 읽어 올립니다. 새로고침하면 최대 1분 전 상태가 보이고, 열어 둔 동안은 2분마다 다시 읽습니다.</footer>
+</main>
+<script>
+(function () {
+  const ME = 'me';
+  const $ = (s) => document.querySelector(s);
+  const el = (t, c, txt) => { const e = document.createElement(t); if (c) e.className = c; if (txt !== undefined) e.textContent = txt; return e; };
+  function render(rows) {
+    const nodes = rows.filter((r) => r.kind === 'node'), pools = rows.filter((r) => r.kind === 'pool'), jobs = rows.filter((r) => r.kind === 'job');
+    const grid = $('#nodes'); grid.replaceChildren();
+    for (const n of nodes) {
+      const mine = n.owner === ME, shared = n.owner.startsWith(ME + ' + '), down = !!n.down;
+      const card = el('div', 'node' + (mine ? ' mine' : '') + (down ? ' down' : ''));
+      const head = el('div', 'head'); head.append(el('span', 'name', n.node), el('span', 'chip ' + (down ? 'bad' : (mine || n.owner === '비어 있음') ? 'ok' : 'warn'), down ? 'down' : n.owner));
+      const bar = el('div', 'bar'); const fill = el('i'); fill.style.width = (100 * n.cores_used / n.cores_total) + '%'; bar.append(fill);
+      card.append(head, bar, el('div', 'small', down ? '사용 불가' : `${n.cores_used}/${n.cores_total} 코어 · ${n.jobs || '빈 노드'}`));
+      grid.append(card);
+    }
+    const up = nodes.filter((n) => !n.down), ours = up.filter((n) => n.owner === ME).length, shared = up.filter((n) => n.owner.startsWith(ME + ' + ')).length, others = up.filter((n) => n.owner !== ME && !n.owner.startsWith(ME + ' + ') && n.owner !== '비어 있음').length;
+    const run = jobs.filter((j) => j.state === 'running' && j.group !== '다른 사용자').length;
+    $('#take').textContent = `가동 ${up.length}노드 중 ${ME} ${ours}${shared ? ` (+공유 ${shared})` : ''} · 다른 사용자 ${others} · 빈 노드 ${up.length - ours - shared - others}. ${ME} 실행 중 ${run}런.`;
+    const at = rows[0] && rows[0].sampled_at; const t = at ? new Date(at.replace(' KST', '+09:00').replace(' ', 'T')) : null;
+    const age = t ? Math.round((Date.now() - t.getTime()) / 60000) : null;
+    const s = $('#stamp'); s.textContent = at ? `마지막 수집 ${at}` + (age !== null ? ` (${age}분 전)` : '') : '수집 시각 없음';
+    s.classList.toggle('old', age !== null && age > 30);
+  }
+  const SOURCES = [
+    ['api', 'https://api.github.com/repos/ksj26aidiff-ctrl/sugar-status/contents/status.json?ref=data', { headers: { Accept: 'application/vnd.github.raw' } }],
+    ['raw', 'https://raw.githubusercontent.com/ksj26aidiff-ctrl/sugar-status/data/status.json', {}],
+    ['pages', 'status.json', {}]];
+  async function load() {
+    let last = null;
+    for (const [name, url, opt] of SOURCES) {
+      try {
+        const r = await fetch(url + (url.includes('?') ? '&' : '?') + 't=' + Date.now(), { cache: 'no-store', ...opt });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        render(await r.json()); $('#src').textContent = name === 'api' ? '1분 데이터' : name === 'raw' ? '수 분 지연 데이터' : '10분 데이터'; return;
+      } catch (e) { last = e; }
+    }
+    $('#take').textContent = '데이터를 불러오지 못했습니다: ' + (last && last.message); $('#take').className = 'take err';
+  }
+  load(); setInterval(load, 120000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) load(); });
+})();
+</script>
+</body>
+</html>
